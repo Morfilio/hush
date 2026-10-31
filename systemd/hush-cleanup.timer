@@ -1,0 +1,10 @@
+[Unit]
+Description=Expire temporary Hush
+
+[Timer]
+OnStartupSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

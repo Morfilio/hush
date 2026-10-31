@@ -1,0 +1,353 @@
+#!/usr/bin/python3
+"""Temporary local secret handoff: a private prompt in, a file path out."""
+import argparse
+import contextlib
+import ctypes
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import resource
+import secrets
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from urllib.parse import unquote_to_bytes
+
+MAX_VALUE = 16384
+MAX_ITEMS = 100
+MAX_MINUTES = 1440
+NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}\Z")
+FILE = re.compile(r"[0-9a-f]{32}\.secret\Z")
+INSTRUCTIONS = """Use Hush when you need a token, API key, or password on this computer.
+Call `hush request NAME --reason 'What this task needs it for'` yourself. This opens a local paste prompt if needed and returns ONLY a private file path. No vault password is needed. Existing secrets are reused until expiry (24 hours by default).
+Read the file inside the command that needs the secret, e.g. `TOKEN_FILE=$(hush request GITHUB_TOKEN --reason 'Read repository checks')` then `GH_TOKEN=$(cat "$TOKEN_FILE") gh pr checks`. Do not run cat on its own, print the value, enable shell tracing, put the value in command arguments, or copy it into chat, logs, or repository files.
+Use the provider's normal execution permissions. If a sandbox blocks the desktop prompt or runtime directory, request the normal permission for this helper; do not weaken the sandbox. Cancel means stop and report that the secret was not supplied.
+Use `~/.local/bin/hush` if hush is not on PATH.
+`hush list` shows available names only. If you cannot run commands on this computer, ask the user to use the bar's Copy value action. Do not claim that a local path can be read from a cloud-only agent.
+"""
+
+
+class SecretError(Exception):
+    pass
+
+
+def harden():
+    os.umask(0o077)
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    if ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) != 0:
+        raise SecretError("Could not disable process dumps.")
+
+
+def valid_name(name):
+    if not isinstance(name, str) or not NAME.fullmatch(name):
+        raise SecretError("Use a name starting with a letter, then letters, digits, dots, dashes or underscores (64 characters maximum).")
+    return name
+
+
+def valid_value(value):
+    if not isinstance(value, str) or not value or "\0" in value or len(value.encode()) > MAX_VALUE:
+        raise SecretError("Secret must be nonempty text, without NUL, at most 16 KiB.")
+    return value
+
+
+def escape(text):
+    # Pinentry's UI toolkit may auto-detect markup. Neutralize before Assuan encoding.
+    return str(text).replace("&", "＆").replace("<", "‹").replace(">", "›").replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def lifetime(minutes):
+    hours, rest = divmod(minutes, 60)
+    if rest:
+        return str(minutes) + (" minute" if minutes == 1 else " minutes")
+    return str(hours) + (" hour" if hours == 1 else " hours")
+
+
+def prompt(description, ok="Send to agent"):
+    program = shutil.which("pinentry-qt") or shutil.which("pinentry")
+    if not program:
+        raise SecretError("Install pinentry to use local secret prompts.")
+    proc = subprocess.Popen([program, "--timeout", "180"], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    def response():
+        chunks = []
+        total = 0
+        while True:
+            line = proc.stdout.readline(MAX_VALUE * 3 + 512)
+            total += len(line)
+            if not line or total > MAX_VALUE * 4:
+                raise SecretError("Secret prompt failed.")
+            if line.startswith(b"OK"):
+                return b"".join(chunks).decode("utf-8")
+            if line.startswith(b"ERR"):
+                raise SecretError("Canceled or prompt timed out.")
+            if line.startswith(b"D "):
+                chunks.append(unquote_to_bytes(line[2:].rstrip(b"\r\n")))
+    def send(command):
+        proc.stdin.write((command + "\n").encode())
+        proc.stdin.flush()
+        return response()
+    try:
+        response()
+        send("SETTITLE Hush")
+        send("SETDESC " + escape(description))
+        send("SETPROMPT Paste secret:")
+        send("SETOK " + escape(ok))
+        send("SETCANCEL Cancel")
+        return send("GETPIN")
+    finally:
+        proc.stdin.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        proc.stdout.close()
+
+
+def boottime():
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
+def private_directory(path):
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise SecretError("Secret directories must be owned by you with permissions 0700.")
+
+
+def private_read(path, limit):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1:
+            raise SecretError("Unsafe secret file permissions or links.")
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise SecretError("Secret file exceeds size limit.")
+    return raw
+
+
+class Store:
+    def __init__(self, runtime=None):
+        self.runtime = Path(runtime or os.environ.get("XDG_RUNTIME_DIR", "/run/user/" + str(os.getuid())))
+        self.directory = self.runtime / "agent-secrets"
+        self.index = self.directory / "index.json"
+
+    @contextlib.contextmanager
+    def lock(self):
+        private_directory(self.runtime)
+        self.directory.mkdir(mode=0o700, exist_ok=True)
+        private_directory(self.directory)
+        fd = os.open(self.directory / "store.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1:
+                raise SecretError("Unsafe lock file.")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise SecretError("Another secret prompt is active. Finish it before retrying.") from None
+            yield
+        finally:
+            os.close(fd)
+
+    def load(self):
+        try:
+            raw = private_read(self.index, 65536)
+        except FileNotFoundError:
+            return {}
+        try:
+            data = json.loads(raw)
+            if not isinstance(data, dict) or len(data) > MAX_ITEMS:
+                raise ValueError()
+            for name, entry in data.items():
+                valid_name(name)
+                if not isinstance(entry, dict) or not FILE.fullmatch(entry.get("file", "")):
+                    raise ValueError()
+                expiry = entry["expires"]
+                if type(expiry) not in (int, float) or not 0 < expiry < float("inf"):
+                    raise ValueError()
+            return data
+        except (ValueError, TypeError, KeyError):
+            raise SecretError("Secret index is invalid.") from None
+
+    def save(self, entries):
+        fd, temporary = tempfile.mkstemp(prefix=".index-", dir=self.directory)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                json.dump(entries, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.index)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def clean(self, entries):
+        now = boottime()
+        remaining = {}
+        for name, entry in entries.items():
+            path = self.directory / entry["file"]
+            if entry["expires"] <= now:
+                path.unlink(missing_ok=True)
+            elif path.exists():
+                remaining[name] = entry
+        if remaining != entries:
+            self.save(remaining)
+        # Clean orphaned writes under the same lock used by all writers.
+        tracked = {entry["file"] for entry in remaining.values()}
+        for path in self.directory.iterdir():
+            if (FILE.fullmatch(path.name) and path.name not in tracked) or path.name.startswith(".index-"):
+                path.unlink()
+        return remaining
+
+    def put(self, entries, name, value, minutes):
+        valid_name(name)
+        valid_value(value)
+        if type(minutes) is not int or not 1 <= minutes <= MAX_MINUTES:
+            raise SecretError("Lifetime must be 1 to 1440 minutes.")
+        if name not in entries and len(entries) >= MAX_ITEMS:
+            raise SecretError("At most 100 temporary secrets are allowed.")
+        filename = secrets.token_hex(16) + ".secret"
+        path = self.directory / filename
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        old = entries.get(name)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(value.encode())
+                stream.flush()
+                os.fsync(stream.fileno())
+            updated = {**entries, name: {"file": filename, "expires": boottime() + minutes * 60}}
+            self.save(updated)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        if old:
+            (self.directory / old["file"]).unlink(missing_ok=True)
+        return path
+
+    def path_for(self, entries, name):
+        if name not in entries:
+            raise SecretError("Secret is missing or expired. Use hush request NAME.")
+        path = self.directory / entries[name]["file"]
+        private_read(path, MAX_VALUE)
+        return path
+
+
+def copy_text(value, sensitive=True):
+    if sensitive:
+        proc = subprocess.Popen(["timeout", "30", "wl-copy", "--foreground", "--sensitive", "--type", "text/plain"],
+                                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        proc.stdin.write(value.encode())
+        proc.stdin.close()
+        try:
+            code = proc.wait(timeout=0.25)
+        except subprocess.TimeoutExpired:
+            return
+        if code:
+            raise SecretError("Could not copy to the Wayland clipboard.")
+    else:
+        subprocess.run(["wl-copy", "--type", "text/plain"], input=value.encode(), check=True, timeout=5)
+
+
+def parser():
+    result = argparse.ArgumentParser(description="Paste a secret once; give agents a temporary file path. No vault password.")
+    commands = result.add_subparsers(dest="action", required=True)
+    listing = commands.add_parser("list", help="List names only, never values")
+    listing.add_argument("--json", action="store_true")
+    listing.add_argument("--details", action="store_true",
+                         help="JSON objects with each name and seconds until expiry, never values")
+    for action in ("set", "request"):
+        command = commands.add_parser(action, help="Paste in a local prompt; return only a private path")
+        command.add_argument("name")
+        command.add_argument("--ttl", type=int, default=MAX_MINUTES, metavar="MINUTES")
+        command.add_argument("--reason", default="")
+        command.add_argument("--fresh", action="store_true", help="Replace any existing value")
+    for action in ("copy", "reference", "remove", "path"):
+        command = commands.add_parser(action, help={"copy": "Copy the value for 30 seconds", "reference": "Copy instructions for using this secret, without its value", "remove": "Forget a temporary secret", "path": "Print only an existing secret's private path"}[action])
+        command.add_argument("name")
+    instruction = commands.add_parser("instructions", help="Instructions to give your agent")
+    instruction.add_argument("--copy", action="store_true")
+    commands.add_parser("open", help="Open the bar panel")
+    commands.add_parser("cleanup", help="Remove expired temporary files")
+    commands.add_parser("clear", help="Forget all temporary secrets")
+    return result
+
+
+def main(argv=None):
+    harden()
+    args = parser().parse_args(argv)
+    if args.action == "instructions":
+        copy_text(INSTRUCTIONS, sensitive=False) if args.copy else print(INSTRUCTIONS, end="")
+        return 0
+    if args.action == "open":
+        return subprocess.call(["omarchy-shell", "shell", "toggle", "io.github.morfilio.hush"])
+    if hasattr(args, "name"):
+        valid_name(args.name)
+    if args.action in ("request", "set"):
+        if not 1 <= args.ttl <= MAX_MINUTES or len(args.reason) > 500 or any(ord(c) < 32 for c in args.reason):
+            raise SecretError("Use a lifetime of 1–1440 minutes and a reason of at most 500 characters without control characters.")
+    store = Store()
+    with store.lock():
+        entries = store.clean(store.load())
+        if args.action == "cleanup":
+            return 0
+        if args.action == "clear":
+            for entry in entries.values():
+                (store.directory / entry["file"]).unlink(missing_ok=True)
+            store.save({})
+            return 0
+        if args.action == "list":
+            names = sorted(entries)
+            if args.details:
+                now = boottime()
+                print(json.dumps([{"name": name, "expires_in": max(0, min(MAX_MINUTES * 60, int(entries[name]["expires"] - now)))}
+                                  for name in names]))
+            else:
+                print(json.dumps(names) if args.json else "\n".join(names))
+            return 0
+        if args.action == "remove":
+            if args.name in entries:
+                (store.directory / entries.pop(args.name)["file"]).unlink(missing_ok=True)
+                store.save(entries)
+            return 0
+        if args.action in ("set", "request"):
+            if args.name in entries and args.action == "request" and not args.fresh:
+                path = store.path_for(entries, args.name)
+            else:
+                replacing = args.name in entries
+                description = ("Replace secret: " if replacing else "Secret needed: ") + args.name
+                if args.reason:
+                    description += "\n" + args.reason
+                description += "\nPaste once. Local agents can use it for " + lifetime(args.ttl) + ".\nAgents receive only a private file path, never the value."
+                if replacing:
+                    description += "\nSubmitting replaces the current value. Cancel keeps it."
+                value = valid_value(prompt(description, ok="Save" if args.action == "set" else "Send to agent"))
+                path = store.put(entries, args.name, value, args.ttl)
+            print(path)
+            return 0
+        path = store.path_for(entries, args.name)
+        if args.action == "path":
+            print(path)
+        elif args.action == "reference":
+            copy_text("Use my temporary secret " + args.name + ". Run `hush request " + args.name + "` to get its private file path, then read it inside the command that needs it. Do not print the value or put it in chat, logs, or repository files.", sensitive=False)
+        elif args.action == "copy":
+            copy_text(private_read(path, MAX_VALUE).decode())
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (SecretError, OSError, subprocess.SubprocessError, UnicodeError) as error:
+        print("hush: " + (str(error) if isinstance(error, SecretError) else "Operation failed; check dependencies and file permissions."), file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("hush: Canceled.", file=sys.stderr)
+        sys.exit(130)

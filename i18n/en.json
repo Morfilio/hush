@@ -1,0 +1,50 @@
+{
+  "title": "Hush",
+  "meta": "Temporary · 24 hours · no password",
+  "help.toggle": "How it works",
+  "name.placeholder": "Name, e.g. GITHUB_TOKEN",
+  "paste": "Paste…",
+  "replace": "Replace…",
+  "paste.tooltip": "Opens a private prompt for the value",
+  "hint.default": "Agents get a private file path, never the value.",
+  "hint.replace": "%1 exists. Pasting replaces its value; canceling keeps it.",
+  "hint.waiting": "A paste prompt is open. Finish it first.",
+  "status.saved": "%1 is ready for local agents.",
+  "status.reference": "Note for %1 copied. Paste it into your agent chat.",
+  "status.value": "Value of %1 copied. The clipboard keeps it for 30 seconds.",
+  "status.forgotten": "%1 forgotten.",
+  "status.cleared": "All secrets forgotten.",
+  "status.setup": "Setup text copied.",
+  "status.saveFailed": "Could not save %1. Run hush set %1 for details.",
+  "status.actionFailed": "That did not work. Run hush list for details.",
+  "status.listFailed": "Could not read secrets. Run hush list for details.",
+  "confirm.forget": "Click again or press Delete to forget %1.",
+  "confirm.clear": "Click Confirm to forget every secret.",
+  "empty.title": "No secrets yet",
+  "empty.body": "When an agent needs one, a paste prompt opens for you.",
+  "section.count": {
+    "one": "%1 secret",
+    "other": "%1 secrets"
+  },
+  "forgetAll": "Forget all",
+  "forgetAll.confirm": "Confirm",
+  "row.reference": "Copy for agent",
+  "row.reference.tooltip": "Copies a note naming %1 for your agent chat, never the value",
+  "row.value.tooltip": "Copy value (C). Avoid pasting it into chats.",
+  "row.forget.tooltip": "Forget (Delete)",
+  "expires.hours": {
+    "one": "%1 hour left",
+    "other": "%1 hours left"
+  },
+  "expires.minutes": {
+    "one": "%1 minute left",
+    "other": "%1 minutes left"
+  },
+  "expires.soon": "Expires in under a minute",
+  "help.agents": "Agents request secrets by name with hush request NAME. You only paste into the prompt.",
+  "help.reference": "Copy for agent copies a short note with the name. Use it to point an agent at a secret you added.",
+  "help.value": "Copy value puts the real secret on the clipboard for 30 seconds.",
+  "help.storage": "Values stay in private temporary files and are removed after 24 hours, at logout, or on reboot.",
+  "help.keys": "↑ ↓ select · Enter copy for agent · C copy value · Delete forget · / name",
+  "help.setup": "Copy setup text for another agent"
+}

@@ -1,0 +1,53 @@
+{
+  "title": "Hush",
+  "meta": "Temporar · 24 de ore · fără parolă",
+  "help.toggle": "Cum funcționează",
+  "name.placeholder": "Nume, de ex. GITHUB_TOKEN",
+  "paste": "Lipește…",
+  "replace": "Înlocuiește…",
+  "paste.tooltip": "Deschide o fereastră privată pentru valoare",
+  "hint.default": "Agenții primesc o cale de fișier privată, niciodată valoarea.",
+  "hint.replace": "%1 există deja. Lipirea îi înlocuiește valoarea; anularea o păstrează.",
+  "hint.waiting": "O fereastră de lipire este deschisă. Termin-o mai întâi.",
+  "status.saved": "%1 este gata pentru agenții locali.",
+  "status.reference": "Nota pentru %1 a fost copiată. Lipește-o în conversația cu agentul.",
+  "status.value": "Valoarea lui %1 a fost copiată. Clipboard-ul o păstrează 30 de secunde.",
+  "status.forgotten": "%1 a fost uitat.",
+  "status.cleared": "Toate secretele au fost uitate.",
+  "status.setup": "Textul de configurare a fost copiat.",
+  "status.saveFailed": "%1 nu a putut fi salvat. Rulează hush set %1 pentru detalii.",
+  "status.actionFailed": "Nu a funcționat. Rulează hush list pentru detalii.",
+  "status.listFailed": "Secretele nu au putut fi citite. Rulează hush list pentru detalii.",
+  "confirm.forget": "Apasă din nou sau Delete pentru a uita %1.",
+  "confirm.clear": "Apasă Confirmă pentru a uita toate secretele.",
+  "empty.title": "Niciun secret încă",
+  "empty.body": "Când un agent are nevoie de unul, se deschide o fereastră de lipire.",
+  "section.count": {
+    "one": "%1 secret",
+    "few": "%1 secrete",
+    "other": "%1 de secrete"
+  },
+  "forgetAll": "Uită tot",
+  "forgetAll.confirm": "Confirmă",
+  "row.reference": "Copiază pentru agent",
+  "row.reference.tooltip": "Copiază o notă cu numele %1 pentru conversația cu agentul, niciodată valoarea",
+  "row.value.tooltip": "Copiază valoarea (C). Evită să o lipești în conversații.",
+  "row.forget.tooltip": "Uită (Delete)",
+  "expires.hours": {
+    "one": "%1 oră rămasă",
+    "few": "%1 ore rămase",
+    "other": "%1 de ore rămase"
+  },
+  "expires.minutes": {
+    "one": "%1 minut rămas",
+    "few": "%1 minute rămase",
+    "other": "%1 de minute rămase"
+  },
+  "expires.soon": "Expiră în mai puțin de un minut",
+  "help.agents": "Agenții cer secrete după nume cu hush request NUME. Tu doar lipești în fereastră.",
+  "help.reference": "Copiază pentru agent copiază o notă scurtă cu numele. Folosește-o ca să îndrumi un agent spre un secret adăugat de tine.",
+  "help.value": "Copiază valoarea pune secretul propriu-zis în clipboard timp de 30 de secunde.",
+  "help.storage": "Valorile rămân în fișiere temporare private și sunt șterse după 24 de ore, la deconectare sau la repornire.",
+  "help.keys": "↑ ↓ selectează · Enter copiază pentru agent · C copiază valoarea · Delete uită · / nume",
+  "help.setup": "Copiază textul de configurare pentru alt agent"
+}

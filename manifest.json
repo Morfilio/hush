@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.morfilio.hush",
+  "name": "Hush",
+  "version": "1.0.0",
+  "author": "Andi Cojocaru",
+  "description": "Paste temporary secrets for agents, without passwords or chat exposure",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Hush",
+    "defaultSection": "right",
+    "allowMultiple": false
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/Morfilio/hush",
+  "repository": "https://github.com/Morfilio/hush"
+}

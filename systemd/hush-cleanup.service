@@ -1,0 +1,8 @@
+[Unit]
+Description=Remove expired Hush temporary files
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/hush cleanup
+UMask=0077
+NoNewPrivileges=true
