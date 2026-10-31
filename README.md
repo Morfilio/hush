@@ -5,6 +5,10 @@ vault password, unlock step, or network service. Usually you do nothing in advan
 when an agent needs a credential, it asks and a local paste prompt opens. To add one
 yourself, click the key icon, type a name, press Enter, and paste the value.
 
+![Hush panel showing three example secrets and their remaining lifetimes](preview.png)
+
+*Actual Omarchy panel with synthetic example entries.*
+
 ## Install
 
 Requires Omarchy with shell plugin support, Python 3.10+, pinentry-qt (or a graphical
@@ -23,6 +27,16 @@ PATH. New agent sessions load the instructions automatically; existing sessions
 can use the setup text in the panel's help. Omit `--configure-agents` to leave agent
 instructions unchanged. Backups go in `$XDG_STATE_HOME/hush/backups` (normally
 `~/.local/state/hush/backups`).
+
+If you added Hush using Omarchy's marketplace command, complete setup from the
+cloned plugin directory (the marketplace does not run installers):
+
+```bash
+python3 ~/.config/omarchy/plugins/io.github.morfilio.hush/install.py --configure-agents
+```
+
+Use your `$XDG_CONFIG_HOME` instead of `~/.config` if customized. This setup step
+installs the CLI and cleanup timer; adding the bar widget alone does not install them.
 
 ## Give an agent a secret
 
